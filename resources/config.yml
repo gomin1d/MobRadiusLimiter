@@ -1,0 +1,17 @@
+# команда перезагрузки конфига /mobradiuslimiter (право: mobradiuslimiter.command)
+
+# лимиты
+limits:
+  # лимит для визеров
+  # список имен типов мобов: https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/entity/EntityType.html
+  WITHER:
+    # максимальное количество мобов, которое может быть в указанном радиусе nearbyRadius
+    limitNearby: 2
+    # радиус, который определяет действие лимита limitNearby
+    nearbyRadius: 800
+    # максимальное количество мобов, которое может быть на весь мир
+    limitWorld: 10
+  SQUID:
+    limitNearby: 10
+    nearbyRadius: 800
+    limitWorld: 40

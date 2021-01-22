@@ -1,0 +1,8 @@
+name: MobRadiusLimiter
+main: ua.lokha.mobradiuslimiter.Main
+version: 1.0.1
+commands:
+  mobradiuslimiter:
+    aliases: mobradiuslimiter
+    description: Перезагрузить конфиг плагина.
+    permission: mobradiuslimiter.command
