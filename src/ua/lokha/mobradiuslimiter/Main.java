@@ -113,9 +113,6 @@ public class Main extends JavaPlugin implements Listener {
             return; // уже удален другим лимитом
         }
 
-        if (this.isIgnore(event.getEntity())) {
-            return;
-        }
         Entity entity = event.getEntity();
         Location location = entity.getLocation();
 
