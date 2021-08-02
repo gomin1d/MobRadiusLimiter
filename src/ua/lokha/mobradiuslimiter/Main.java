@@ -71,6 +71,12 @@ public class Main extends JavaPlugin implements Listener {
         }
 
         try {
+            // обратная совместимость
+            Object globalLimits = config.get("global-limits");
+            if (globalLimits != null) {
+                config.set("common-limit", globalLimits);
+            }
+
             commonLimitNearby = ((Number) config.get("common-limit.limitNearby")).intValue();
             commonNearbyRadius = ((Number) config.get("common-limit.nearbyRadius")).intValue();
         } catch (Exception e) {
