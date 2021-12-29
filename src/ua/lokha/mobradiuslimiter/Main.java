@@ -143,12 +143,12 @@ public class Main extends JavaPlugin implements Listener {
                         .collect(Collectors.toList());
                 if (nearbyEntities.size() > mobLimit.getLimitNearby()) {
                     entity.remove();
-                    mobs.stream()
+                    nearbyEntities.stream()
                             .skip(mobLimit.getLimitNearby())
                             .filter(Entity::isValid)
                             .forEach(Entity::remove);
                     limitedLogs.put(hashCode(2, entity.getType(), location),
-                            "Лимит " + entity.getType().name() + " в радиусе " + mobs.size() + "/" + mobLimit.getLimitNearby() + " локация спавна " +
+                            "Лимит " + entity.getType().name() + " в радиусе " + nearbyEntities.size() + "/" + mobLimit.getLimitNearby() + " локация спавна " +
                                     location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
                 }
             }
