@@ -27,3 +27,5 @@ common-limit:
 ignore-entity-types:
   - ENDERMITE
   - ITEM_FRAME
+
+world-limits: {}

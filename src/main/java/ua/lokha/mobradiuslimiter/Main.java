@@ -10,6 +10,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
@@ -23,10 +24,8 @@ import java.util.stream.Collectors;
 
 public class Main extends JavaPlugin implements Listener {
 
-    private Map<EntityType, MobLimit> mobLimitMap = new EnumMap<>(EntityType.class);
-    private EnumSet<EntityType> ignoreEntityTypes = EnumSet.noneOf(EntityType.class);
-    private int commonLimitNearby; // лимит в радиусе
-    private int commonNearbyRadius;
+    private WorldLimit defaultWorldLimit;
+    private Map<String, WorldLimit> worldLimitMap;
 
     private Map<Integer, String> limitedLogs = new HashMap<>();
 
@@ -49,21 +48,40 @@ public class Main extends JavaPlugin implements Listener {
 
     public void loadConfigParams() {
         FileConfiguration config = this.getConfig();
-        mobLimitMap.clear();
-        for (String mobType : config.getConfigurationSection("limits").getKeys(false)) {
+        defaultWorldLimit = this.loadWorldLimit(config, "");
+        this.getLogger().info("Загружен лимит по умолчанию " + defaultWorldLimit);
+        ConfigurationSection section = config.getConfigurationSection("world-limits");
+        worldLimitMap = new HashMap<>();
+        if (section != null) {
+            for (String key : section.getKeys(false)) {
+                try {
+                    WorldLimit worldLimit = this.loadWorldLimit(config, "world-limits." + key + ".");
+                    worldLimitMap.put(key, worldLimit);
+                    this.getLogger().info("Загружен лимит мира " + key + ": " + worldLimit);
+                } catch (Exception e) {
+                    this.getLogger().severe("Ошибка загрузки лимита мира " + key);
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    public WorldLimit loadWorldLimit(FileConfiguration config, String prefixSection) {
+        WorldLimit worldLimit = new WorldLimit();
+        worldLimit.getMobLimitMap().clear();
+        for (String mobType : config.getConfigurationSection(prefixSection + "limits").getKeys(false)) {
             try {
                 EntityType entityType = EntityType.valueOf(mobType);
-                Number limitNearby = (Number) config.get("limits." + mobType + ".limitNearby");
-                Number nearbyRadius = (Number) config.get("limits." + mobType + ".nearbyRadius");
-                Number limitWorld = (Number) config.get("limits." + mobType + ".limitWorld");
+                Number limitNearby = (Number) config.get(prefixSection + "limits." + mobType + ".limitNearby");
+                Number nearbyRadius = (Number) config.get(prefixSection + "limits." + mobType + ".nearbyRadius");
+                Number limitWorld = (Number) config.get(prefixSection + "limits." + mobType + ".limitWorld");
                 MobLimit mobLimit = new MobLimit(
                         limitNearby.intValue(),
                         nearbyRadius.intValue(),
                         limitWorld.intValue(),
                         entityType.getEntityClass()
                 );
-                mobLimitMap.put(entityType, mobLimit);
-                this.getLogger().info("Загрузили лимит: " + mobLimit);
+                worldLimit.getMobLimitMap().put(entityType, mobLimit);
             } catch (Exception e) {
                 this.getLogger().severe("Ошибка обработки limits." + mobType);
                 e.printStackTrace();
@@ -72,22 +90,22 @@ public class Main extends JavaPlugin implements Listener {
 
         try {
             // обратная совместимость
-            Object globalLimits = config.get("global-limits");
+            Object globalLimits = config.get(prefixSection + "global-limits");
             if (globalLimits != null) {
-                config.set("common-limit", globalLimits);
+                config.set(prefixSection + "common-limit", globalLimits);
             }
 
-            commonLimitNearby = ((Number) config.get("common-limit.limitNearby")).intValue();
-            commonNearbyRadius = ((Number) config.get("common-limit.nearbyRadius")).intValue();
+            worldLimit.setCommonLimitNearby(((Number) config.get(prefixSection + "common-limit.limitNearby")).intValue());
+            worldLimit.setCommonNearbyRadius(((Number) config.get(prefixSection + "common-limit.nearbyRadius")).intValue());
         } catch (Exception e) {
-            commonLimitNearby = 400;
-            commonNearbyRadius = 800;
+            worldLimit.setCommonLimitNearby(400);
+            worldLimit.setCommonNearbyRadius(800);
             this.getLogger().severe("Ошибка загрузки common-limit");
             e.printStackTrace();
         }
 
         try {
-            ignoreEntityTypes.clear();
+            worldLimit.getIgnoreEntityTypes().clear();
             this.getConfig().getStringList("ignore-entity-types").stream()
                     .map(name -> {
                         try {
@@ -98,12 +116,13 @@ public class Main extends JavaPlugin implements Listener {
                         }
                     })
                     .filter(Objects::nonNull)
-                    .forEach(ignoreEntityTypes::add);
+                    .forEach(worldLimit.getIgnoreEntityTypes()::add);
         } catch (Exception e) {
             this.getLogger().severe("Ошибка загрузки ignore-entity-types");
             e.printStackTrace();
         }
-        ignoreEntityTypes.add(EntityType.PLAYER);
+        worldLimit.getIgnoreEntityTypes().add(EntityType.PLAYER);
+        return worldLimit;
     }
 
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -122,7 +141,9 @@ public class Main extends JavaPlugin implements Listener {
         Entity entity = event.getEntity();
         Location location = entity.getLocation();
 
-        MobLimit mobLimit = mobLimitMap.get(entity.getType());
+        WorldLimit worldLimit = worldLimitMap.getOrDefault(location.getWorld().getName(), defaultWorldLimit);
+
+        MobLimit mobLimit = worldLimit.getMobLimitMap().get(entity.getType());
         if(mobLimit != null){
             Collection<? extends Entity> mobs = location.getWorld().getEntitiesByClass(mobLimit.getEntityClass());
             if (mobs.size() > mobLimit.getLimitWorld()) {
@@ -153,14 +174,14 @@ public class Main extends JavaPlugin implements Listener {
                 }
             }
         } else {
-            Collection<Entity> entities = location.getWorld().getNearbyEntities(location, commonNearbyRadius, 10000, commonNearbyRadius);
-            int limit = commonLimitNearby;
+            Collection<Entity> entities = location.getWorld().getNearbyEntities(location, worldLimit.getCommonNearbyRadius(), 10000, worldLimit.getCommonNearbyRadius());
+            int limit = worldLimit.getCommonLimitNearby();
             if (entities.size() > limit) {
                 entity.remove();
                 entities.stream()
                         .skip(limit)
                         .filter(Entity::isValid)
-                        .filter(it -> !this.isIgnore(it))
+                        .filter(it -> !this.isIgnore(it, worldLimit))
                         .forEach(Entity::remove);
                 limitedLogs.put(hashCode(3, null, location),
                         "Лимит мобов " + entities.size() + "/" + limit + " в радиусе от " +
@@ -181,8 +202,8 @@ public class Main extends JavaPlugin implements Listener {
         return result;
     }
 
-    private boolean isIgnore(Entity entity) {
-        return ignoreEntityTypes.contains(entity.getType());
+    private boolean isIgnore(Entity entity, WorldLimit worldLimit) {
+        return worldLimit.getIgnoreEntityTypes().contains(entity.getType());
     }
 
     public static boolean hasDistance(Location to, Location from, double distance) {
@@ -190,45 +211,5 @@ public class Main extends JavaPlugin implements Listener {
                 (Math.abs(to.getX() - from.getX()) >= distance
                         || Math.abs(to.getY() - from.getY()) >= distance
                         || Math.abs(to.getZ() - from.getZ()) >= distance);
-    }
-
-    public static class MobLimit{
-        private int limitNearby; // лимит в радиусе
-        private int nearbyRadius;
-        private int limitWorld; // лимит во всем мире
-        private Class<? extends Entity> entityClass;
-
-        public MobLimit(int limitNearby, int nearbyRadius, int limitWorld, Class<? extends Entity> entityClass){
-            this.limitNearby = limitNearby;
-            this.nearbyRadius = nearbyRadius;
-            this.limitWorld = limitWorld;
-            this.entityClass = entityClass;
-        }
-
-        public int getLimitNearby() {
-            return limitNearby;
-        }
-
-        public int getNearbyRadius() {
-            return nearbyRadius;
-        }
-
-        public int getLimitWorld() {
-            return limitWorld;
-        }
-
-        public Class<? extends Entity> getEntityClass() {
-            return entityClass;
-        }
-
-        @Override
-        public String toString() {
-            return "MobLimit{" +
-                    "limitNearby=" + limitNearby +
-                    ", nearbyRadius=" + nearbyRadius +
-                    ", limitWorld=" + limitWorld +
-                    ", entityClass=" + entityClass +
-                    '}';
-        }
     }
 }
