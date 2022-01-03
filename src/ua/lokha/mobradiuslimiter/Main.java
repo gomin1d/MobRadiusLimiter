@@ -138,7 +138,7 @@ public class Main extends JavaPlugin implements Listener {
                 List<? extends Entity> nearbyEntities = mobs.stream()
                         .filter(wither -> {
                             Location loc = wither.getLocation();
-                            return !hasDistance2D(loc.getX(), loc.getZ(), location.getX(), location.getZ(), mobLimit.getNearbyRadius());
+                            return !hasDistance(loc, location, mobLimit.getNearbyRadius());
                         })
                         .collect(Collectors.toList());
                 if (nearbyEntities.size() > mobLimit.getLimitNearby()) {
@@ -185,9 +185,11 @@ public class Main extends JavaPlugin implements Listener {
         return ignoreEntityTypes.contains(entity.getType());
     }
 
-    public static boolean hasDistance2D(double x1, double z1, double x2, double z2, double distance) {
-        return Math.abs(x1 - x2) >= distance
-                || Math.abs(z1 - z2) >= distance;
+    public static boolean hasDistance(Location to, Location from, double distance) {
+        return !to.getWorld().equals(from.getWorld()) ||
+                (Math.abs(to.getX() - from.getX()) >= distance
+                        || Math.abs(to.getY() - from.getY()) >= distance
+                        || Math.abs(to.getZ() - from.getZ()) >= distance);
     }
 
     public static class MobLimit{
