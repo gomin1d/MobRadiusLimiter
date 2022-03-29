@@ -29,6 +29,8 @@ public class Main extends JavaPlugin implements Listener {
 
     private Map<Integer, String> limitedLogs = new HashMap<>();
 
+    private int[] entityTypePriorities;
+
     public void onEnable() {
         Bukkit.getPluginManager().registerEvents(this, this);
         Bukkit.getScheduler().runTaskTimer(this, () -> {
@@ -63,6 +65,31 @@ public class Main extends JavaPlugin implements Listener {
                     e.printStackTrace();
                 }
             }
+        }
+
+        this.loadEntityTypePriorities();
+    }
+
+    private void loadEntityTypePriorities() {
+        EntityType[] values = EntityType.values();
+        entityTypePriorities = new int[values.length];
+
+        FileConfiguration config = this.getConfig();
+        List<EntityType> entityTypes = config.getStringList("entity-type-priorities").stream()
+                .map(name -> {
+                    try {
+                        return EntityType.valueOf(name);
+                    } catch (Exception e) {
+                        this.getLogger().severe("Моб " + name + " не найден.");
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        int priority = Integer.MAX_VALUE / 2;
+        for (EntityType entityType : entityTypes) {
+            entityTypePriorities[entityType.ordinal()] = priority--;
         }
     }
 
@@ -106,7 +133,7 @@ public class Main extends JavaPlugin implements Listener {
 
         try {
             worldLimit.getIgnoreEntityTypes().clear();
-            this.getConfig().getStringList("ignore-entity-types").stream()
+            config.getStringList(prefixSection + "ignore-entity-types").stream()
                     .map(name -> {
                         try {
                             return EntityType.valueOf(name);
@@ -121,7 +148,6 @@ public class Main extends JavaPlugin implements Listener {
             this.getLogger().severe("Ошибка загрузки ignore-entity-types");
             e.printStackTrace();
         }
-        worldLimit.getIgnoreEntityTypes().add(EntityType.PLAYER);
         return worldLimit;
     }
 
@@ -132,12 +158,15 @@ public class Main extends JavaPlugin implements Listener {
         return true;
     }
 
+    @SuppressWarnings("unchecked")
     @EventHandler(priority = EventPriority.LOW)
     public void onAdd(EntityAddToWorldEvent event) {
         if(!event.getEntity().isValid()){
             return; // уже удален другим лимитом
         }
-
+        if(event.getEntity().getType() == EntityType.PLAYER) {
+            return;
+        }
         Entity entity = event.getEntity();
         Location location = entity.getLocation();
 
@@ -145,49 +174,90 @@ public class Main extends JavaPlugin implements Listener {
 
         MobLimit mobLimit = worldLimit.getMobLimitMap().get(entity.getType());
         if(mobLimit != null){
-            Collection<? extends Entity> mobs = location.getWorld().getEntitiesByClass(mobLimit.getEntityClass());
+            Collection<Entity> mobs = (Collection<Entity>)location.getWorld().getEntitiesByClass(mobLimit.getEntityClass());
             if (mobs.size() > mobLimit.getLimitWorld()) {
-                entity.remove();
-                mobs.stream()
-                        .skip(mobLimit.getLimitWorld())
-                        .filter(Entity::isValid)
-                        .forEach(Entity::remove);
-                limitedLogs.put(hashCode(1, entity.getType(), location),
-                        "Лимит " + entity.getType().name() + " в мире " + mobs.size() + "/" + mobLimit.getLimitWorld() + " локация спавна " +
-                                location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
-            } else {
-                List<? extends Entity> nearbyEntities = mobs.stream()
+                Collection<Entity> filteredMobs = filterAndSort(mobs);
+                if (filteredMobs.size() > mobLimit.getLimitWorld()) {
+                    int doRemove = filteredMobs.size() - mobLimit.getLimitWorld();
+                    Iterator<Entity> iterator = filteredMobs.iterator();
+                    for (int i = 0; i < doRemove; i++) {
+                        iterator.next().remove();
+                    }
+                    limitedLogs.put(hashCode(1, entity.getType(), location),
+                            "Лимит " + entity.getType().name() + " в мире " + filteredMobs.size() + "/" + mobLimit.getLimitWorld() + " локация спавна " +
+                                    location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
+                    return;
+                }
+            }
+
+            if (mobs.size() > mobLimit.getLimitNearby()) {
+                List<Entity> nearbyEntities = mobs.stream()
                         .filter(wither -> {
                             Location loc = wither.getLocation();
                             return !hasDistance(loc, location, mobLimit.getNearbyRadius());
                         })
                         .collect(Collectors.toList());
                 if (nearbyEntities.size() > mobLimit.getLimitNearby()) {
-                    entity.remove();
-                    nearbyEntities.stream()
-                            .skip(mobLimit.getLimitNearby())
-                            .filter(Entity::isValid)
-                            .forEach(Entity::remove);
-                    limitedLogs.put(hashCode(2, entity.getType(), location),
-                            "Лимит " + entity.getType().name() + " в радиусе " + nearbyEntities.size() + "/" + mobLimit.getLimitNearby() + " локация спавна " +
-                                    location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
+                    Collection<Entity> filteredNearbyEntities = filterAndSort(nearbyEntities);
+                    if (filteredNearbyEntities.size() > mobLimit.getLimitNearby()) {
+                        int doRemove = filteredNearbyEntities.size() - mobLimit.getLimitNearby();
+                        Iterator<Entity> iterator = filteredNearbyEntities.iterator();
+                        for (int i = 0; i < doRemove; i++) {
+                            iterator.next().remove();
+                        }
+                        limitedLogs.put(hashCode(2, entity.getType(), location),
+                                "Лимит " + entity.getType().name() + " в радиусе " + filteredNearbyEntities.size() + "/" + mobLimit.getLimitNearby() + " локация спавна " +
+                                        location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
+                        return;
+                    }
                 }
             }
-        } else {
-            Collection<Entity> entities = location.getWorld().getNearbyEntities(location, worldLimit.getCommonNearbyRadius(), 10000, worldLimit.getCommonNearbyRadius());
-            int limit = worldLimit.getCommonLimitNearby();
+            return;
+        }
+
+        int limit = worldLimit.getCommonLimitNearby();
+        if (location.getWorld().getEntityCount() > limit) {
+            int radius = worldLimit.getCommonNearbyRadius();
+            Collection<Entity> entities = NmsUtils.getNearbyEntities(
+                    new Location(location.getWorld(), location.getX() - radius, Integer.MIN_VALUE, location.getZ() - radius),
+                    new Location(location.getWorld(), location.getX() + radius, Integer.MAX_VALUE, location.getZ() + radius)
+            );
             if (entities.size() > limit) {
-                entity.remove();
-                entities.stream()
-                        .skip(limit)
-                        .filter(Entity::isValid)
-                        .filter(it -> !this.isIgnore(it, worldLimit))
-                        .forEach(Entity::remove);
-                limitedLogs.put(hashCode(3, null, location),
-                        "Лимит мобов " + entities.size() + "/" + limit + " в радиусе от " +
-                                location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
+                Collection<Entity> filteredEntities = this.filterAndSortAndIgnore(entities, worldLimit);
+                if (filteredEntities.size() > limit) {
+                    int doRemove = filteredEntities.size() - limit;
+                    Iterator<Entity> iterator = filteredEntities.iterator();
+                    for (int i = 0; i < doRemove; i++) {
+                        iterator.next().remove();
+                    }
+                    limitedLogs.put(hashCode(3, null, location),
+                            "Лимит мобов " + filteredEntities.size() + "/" + limit + " в радиусе от " +
+                                    location.getWorld().getName() + " " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
+                    return;
+                }
             }
         }
+    }
+
+    private Comparator<Entity> comparator = Comparator
+                    .<Entity>comparingInt(value -> entityTypePriorities[value.getType().ordinal()])
+                    .thenComparingInt(value -> -value.getEntityId());
+
+    public List<Entity> filterAndSort(Collection<Entity> entities) {
+        return entities.stream()
+                .filter(Entity::isValid)
+                .filter(entity -> entity.getType() != EntityType.PLAYER)
+                .sorted(comparator)
+                .collect(Collectors.toList());
+    }
+
+    public List<Entity> filterAndSortAndIgnore(Collection<Entity> entities, WorldLimit worldLimit) {
+        return entities.stream()
+                .filter(Entity::isValid)
+                .filter(it -> !this.isIgnore(it, worldLimit))
+                .filter(entity -> entity.getType() != EntityType.PLAYER)
+                .sorted(comparator)
+                .collect(Collectors.toList());
     }
 
     public static int hashCode(int typeMessage, EntityType type, Location chunkLocation) {
